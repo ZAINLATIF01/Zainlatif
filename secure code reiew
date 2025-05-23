@@ -1,0 +1,63 @@
+#include <iostream>
+#include <fstream>
+#include <string>
+#include <regex>
+#include <vector>
+#include <unistd.h>
+#include <netinet/in.h>
+#include <filesystem>
+
+#define PORT 8080
+
+void handle_client(int client_socket) {
+    std::vector<char> buffer(2048);
+    ssize_t bytes_read = read(client_socket, buffer.data(), buffer.size() - 1);
+    if (bytes_read <= 0) {
+        close(client_socket);
+        return;
+    }
+
+    buffer[bytes_read] = '\0';
+    std::string request(buffer.data());
+    std::smatch match;
+    std::regex get_regex("^GET /([a-zA-Z0-9_./-]+) HTTP/1\\.[01]");
+
+    if (!std::regex_search(request, match, get_regex)) {
+        std::string response = "HTTP/1.1 400 Bad Request\r\n\r\n";
+        write(client_socket, response.c_str(), response.size());
+        close(client_socket);
+        return;
+    }
+
+    std::string filename = match[1];
+    if (filename.find("..") != std::string::npos) {
+        std::string response = "HTTP/1.1 403 Forbidden\r\n\r\n";
+        write(client_socket, response.c_str(), response.size());
+        close(client_socket);
+        return;
+    }
+
+    std::filesystem::path file_path = std::filesystem::weakly_canonical("www/" + filename);
+    if (file_path.string().find("www/") != 0) {
+        std::string response = "HTTP/1.1 403 Forbidden\r\n\r\n";
+        write(client_socket, response.c_str(), response.size());
+        close(client_socket);
+        return;
+    }
+
+    std::ifstream file(file_path);
+    if (!file) {
+        std::string response = "HTTP/1.1 404 Not Found\r\n\r\n";
+        write(client_socket, response.c_str(), response.size());
+    } else {
+        std::string response = "HTTP/1.1 200 OK\r\n\r\n";
+        write(client_socket, response.c_str(), response.size());
+        std::string line;
+        while (getline(file, line)) {
+            line += "\n";
+            write(client_socket, line.c_str(), line.size());
+        }
+    }
+
+    close(client_socket);
+}
